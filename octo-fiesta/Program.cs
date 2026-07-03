@@ -90,7 +90,7 @@ else if (musicService == MusicService.SquidWTF)
     var squidWtfSource = builder.Configuration.GetValue<string>("SquidWTF:Source") ?? "Qobuz";
     var isTidalSource = squidWtfSource.Equals("Tidal", StringComparison.OrdinalIgnoreCase);
 
-    // Only Tidal source supports playlists via SquidWTF; Qobuz and Amazon Music do not
+    // Only Tidal source supports playlists via SquidWTF; Qobuz, Amazon Music and JioSaavn do not
     if (enableExternalPlaylists && isTidalSource)
     {
         builder.Services.AddSingleton<PlaylistSyncService>();

@@ -10,7 +10,7 @@ namespace octo_fiesta.Services.SquidWTF;
 
 /// <summary>
 /// Metadata service implementation using SquidWTF API
-/// Supports Qobuz, Tidal, and Amazon Music backends
+/// Supports Qobuz, Tidal, Amazon Music, and JioSaavn backends
 /// </summary>
 public class SquidWTFMetadataService : IMusicMetadataService
 {
@@ -40,6 +40,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
     // API endpoints
     private const string QobuzBaseUrl = "https://qobuz.squid.wtf";
     private const string AmazonBaseUrl = "https://amz.squid.wtf";
+    private const string JioSaavnBaseUrl = "https://saavn.squid.wtf";
 
     // Required headers
     private const string QobuzCountryHeader = "Token-Country";
@@ -50,6 +51,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 
     private bool IsQobuzSource => _settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
     private bool IsAmazonSource => _settings.Source.Equals("AmazonMusic", StringComparison.OrdinalIgnoreCase);
+    private bool IsJioSaavnSource => _settings.Source.Equals("JioSaavn", StringComparison.OrdinalIgnoreCase);
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory,
@@ -77,6 +79,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 return await SearchSongsQobuzAsync(query, limit);
             if (IsAmazonSource)
                 return await SearchSongsAmazonAsync(query, limit);
+            if (IsJioSaavnSource)
+                return await SearchSongsJioSaavnAsync(query, limit);
             return await SearchSongsTidalAsync(query, limit);
         }
         catch (Exception ex)
@@ -94,6 +98,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 return await SearchAlbumsQobuzAsync(query, limit);
             if (IsAmazonSource)
                 return await SearchAlbumsAmazonAsync(query, limit);
+            if (IsJioSaavnSource)
+                return await SearchAlbumsJioSaavnAsync(query, limit);
             return await SearchAlbumsTidalAsync(query, limit);
         }
         catch (Exception ex)
@@ -111,6 +117,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 return await SearchArtistsQobuzAsync(query, limit);
             if (IsAmazonSource)
                 return new List<Artist>(); // Amazon Music API doesn't expose artist search
+            if (IsJioSaavnSource)
+                return await SearchArtistsJioSaavnAsync(query, limit);
             return await SearchArtistsTidalAsync(query, limit);
         }
         catch (Exception ex)
@@ -167,6 +175,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 return await GetSongQobuzAsync(externalId);
             if (IsAmazonSource)
                 return await GetSongAmazonAsync(externalId);
+            if (IsJioSaavnSource)
+                return await GetSongJioSaavnAsync(externalId);
             return await GetSongTidalAsync(externalId);
         }
         catch (Exception ex)
@@ -186,6 +196,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 return await GetAlbumQobuzAsync(externalId);
             if (IsAmazonSource)
                 return await GetAlbumAmazonAsync(externalId);
+            if (IsJioSaavnSource)
+                return await GetAlbumJioSaavnAsync(externalId);
             return await GetAlbumTidalAsync(externalId);
         }
         catch (Exception ex)
@@ -205,6 +217,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 return await GetArtistQobuzAsync(externalId);
             if (IsAmazonSource)
                 return null; // Amazon Music API doesn't expose individual artist lookup
+            if (IsJioSaavnSource)
+                return null; // JioSaavn artist detail not implemented
             return await GetArtistTidalAsync(externalId);
         }
         catch (Exception ex)
@@ -224,6 +238,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 return await GetArtistAlbumsQobuzAsync(externalId);
             if (IsAmazonSource)
                 return new List<Album>(); // Amazon Music API doesn't expose artist album lists
+            if (IsJioSaavnSource)
+                return new List<Album>(); // JioSaavn artist albums not implemented
             return await GetArtistAlbumsTidalAsync(externalId);
         }
         catch (Exception ex)
@@ -238,7 +254,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         try
         {
             // Only Tidal supports playlist search via SquidWTF
-            if (!IsQobuzSource && !IsAmazonSource)
+            if (!IsQobuzSource && !IsAmazonSource && !IsJioSaavnSource)
                 return await SearchPlaylistsTidalAsync(query, limit);
 
             return new List<ExternalPlaylist>();
@@ -256,7 +272,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 
         try
         {
-            if (!IsQobuzSource && !IsAmazonSource)
+            if (!IsQobuzSource && !IsAmazonSource && !IsJioSaavnSource)
                 return await GetPlaylistTidalAsync(externalId);
 
             return null;
@@ -274,7 +290,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 
         try
         {
-            if (!IsQobuzSource && !IsAmazonSource)
+            if (!IsQobuzSource && !IsAmazonSource && !IsJioSaavnSource)
                 return await GetPlaylistTracksTidalAsync(externalId);
 
             return new List<Song>();
@@ -767,6 +783,248 @@ public class SquidWTFMetadataService : IMusicMetadataService
             IsLocal = false,
             ExternalProvider = "squidwtf",
             ExternalId = externalId
+        };
+    }
+
+    #endregion
+
+    #region JioSaavn Backend Methods
+
+    private async Task<List<Song>> SearchSongsJioSaavnAsync(string query, int limit)
+    {
+        var url = $"{JioSaavnBaseUrl}/api/search/songs?query={Uri.EscapeDataString(query)}&page=0&limit={Math.Max(limit, 10)}";
+        var response = await SendJioSaavnGetAsync(url);
+        if (response == null) return new List<Song>();
+
+        var result = JsonSerializer.Deserialize<JioSaavnResponse<JioSaavnSearchResult<JioSaavnSong>>>(response);
+        if (result?.Data?.Results == null) return new List<Song>();
+
+        return result.Data.Results
+            .Take(limit)
+            .Select(MapJioSaavnSongToSong)
+            .Where(ShouldIncludeSong)
+            .ToList();
+    }
+
+    private async Task<List<Album>> SearchAlbumsJioSaavnAsync(string query, int limit)
+    {
+        var url = $"{JioSaavnBaseUrl}/api/search/albums?query={Uri.EscapeDataString(query)}&page=0&limit={Math.Max(limit, 10)}";
+        var response = await SendJioSaavnGetAsync(url);
+        if (response == null) return new List<Album>();
+
+        var result = JsonSerializer.Deserialize<JioSaavnResponse<JioSaavnSearchResult<JioSaavnSearchAlbum>>>(response);
+        if (result?.Data?.Results == null) return new List<Album>();
+
+        return result.Data.Results
+            .Take(limit)
+            .Select(MapJioSaavnSearchAlbumToAlbum)
+            .ToList();
+    }
+
+    private async Task<List<Artist>> SearchArtistsJioSaavnAsync(string query, int limit)
+    {
+        var url = $"{JioSaavnBaseUrl}/api/search/artists?query={Uri.EscapeDataString(query)}&page=0&limit={Math.Max(limit, 10)}";
+        var response = await SendJioSaavnGetAsync(url);
+        if (response == null) return new List<Artist>();
+
+        var result = JsonSerializer.Deserialize<JioSaavnResponse<JioSaavnSearchResult<JioSaavnSearchArtist>>>(response);
+        if (result?.Data?.Results == null) return new List<Artist>();
+
+        return result.Data.Results
+            .Take(limit)
+            .Select(MapJioSaavnSearchArtistToArtist)
+            .ToList();
+    }
+
+    private async Task<Song?> GetSongJioSaavnAsync(string songId)
+    {
+        var url = $"{JioSaavnBaseUrl}/api/songs/{Uri.EscapeDataString(songId)}";
+        var response = await SendJioSaavnGetAsync(url);
+        if (response == null) return null;
+
+        var result = JsonSerializer.Deserialize<JioSaavnResponse<List<JioSaavnSong>>>(response);
+        var song = result?.Data?.FirstOrDefault();
+        if (song == null) return null;
+
+        return MapJioSaavnSongToSong(song);
+    }
+
+    private async Task<Album?> GetAlbumJioSaavnAsync(string albumId)
+    {
+        var url = $"{JioSaavnBaseUrl}/api/albums?id={Uri.EscapeDataString(albumId)}";
+        var response = await SendJioSaavnGetAsync(url);
+        if (response == null) return null;
+
+        var result = JsonSerializer.Deserialize<JioSaavnResponse<JioSaavnAlbum>>(response);
+        var albumData = result?.Data;
+        if (albumData == null) return null;
+
+        return MapJioSaavnAlbumToAlbum(albumData);
+    }
+
+    private async Task<string?> SendJioSaavnGetAsync(string url)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("JioSaavn API returned {StatusCode} for {Url}", response.StatusCode, url);
+                return null;
+            }
+
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send JioSaavn request to {Url}", url);
+            return null;
+        }
+    }
+
+    #endregion
+
+    #region Mapping Methods - JioSaavn
+
+    private static string? GetJioSaavnBestImageUrl(List<JioSaavnQualityUrl>? images)
+    {
+        if (images == null || images.Count == 0) return null;
+        // Prefer highest quality (500x500 > 150x150 > 50x50)
+        return images.OrderByDescending(i => i.Quality?.Length).FirstOrDefault()?.Url;
+    }
+
+    private Song MapJioSaavnSongToSong(JioSaavnSong song)
+    {
+        var id = song.Id ?? "";
+        var primaryArtists = song.Artists?.Primary ?? new List<JioSaavnArtistRef>();
+        var artistName = primaryArtists.FirstOrDefault()?.Name ?? "";
+        var artists = primaryArtists
+            .Where(a => !string.IsNullOrEmpty(a.Name))
+            .Select(a => new Artist
+            {
+                Id = $"ext-squidwtf-artist-{a.Id ?? ""}",
+                Name = a.Name!,
+                IsLocal = false,
+                ExternalProvider = "squidwtf",
+                ExternalId = a.Id ?? ""
+            })
+            .ToList<Artist>();
+
+        var coverUrl = GetJioSaavnBestImageUrl(song.Image);
+        if (coverUrl != null && !string.IsNullOrEmpty(id)) CacheCoverUrl(id, coverUrl);
+
+        var albumId = !string.IsNullOrEmpty(song.Album?.Id)
+            ? $"ext-squidwtf-album-{song.Album.Id}"
+            : $"ext-squidwtf-song-{id}";
+
+        int? year = null;
+        if (!string.IsNullOrEmpty(song.Year) && int.TryParse(song.Year, out var y)) year = y;
+        else if (!string.IsNullOrEmpty(song.ReleaseDate) && song.ReleaseDate.Length >= 4
+                 && int.TryParse(song.ReleaseDate[..4], out var ry)) year = ry;
+
+        return new Song
+        {
+            Title = song.Name ?? "",
+            Artist = artistName,
+            Artists = artists,
+            Album = song.Album?.Name ?? "",
+            AlbumId = albumId,
+            Duration = song.Duration,
+            Year = year,
+            Copyright = song.Copyright,
+            CoverArtUrl = coverUrl,
+            CoverArtUrlLarge = coverUrl,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = id
+        };
+    }
+
+    private Album MapJioSaavnSearchAlbumToAlbum(JioSaavnSearchAlbum album)
+    {
+        var id = album.Id ?? "";
+        var primaryArtists = album.Artists?.Primary ?? new List<JioSaavnArtistRef>();
+        var artistName = primaryArtists.FirstOrDefault()?.Name ?? "";
+        var coverUrl = GetJioSaavnBestImageUrl(album.Image);
+
+        return new Album
+        {
+            Id = $"ext-squidwtf-album-{id}",
+            Title = album.Name ?? "",
+            Artist = artistName,
+            ArtistId = null,
+            Year = album.Year,
+            CoverArtUrl = coverUrl,
+            CoverArtUrlLarge = coverUrl,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = id
+        };
+    }
+
+    private Album MapJioSaavnAlbumToAlbum(JioSaavnAlbum albumData)
+    {
+        var id = albumData.Id ?? "";
+        var primaryArtists = albumData.Artists?.Primary ?? new List<JioSaavnArtistRef>();
+        var artistName = primaryArtists.FirstOrDefault()?.Name ?? "";
+        var coverUrl = GetJioSaavnBestImageUrl(albumData.Image);
+
+        var album = new Album
+        {
+            Id = $"ext-squidwtf-album-{id}",
+            Title = albumData.Name ?? "",
+            Artist = artistName,
+            ArtistId = null,
+            Year = albumData.Year,
+            SongCount = albumData.SongCount ?? albumData.Songs?.Count ?? 0,
+            CoverArtUrl = coverUrl,
+            CoverArtUrlLarge = coverUrl,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = id
+        };
+
+        if (albumData.Songs != null)
+        {
+            int trackNum = 1;
+            foreach (var song in albumData.Songs)
+            {
+                var mapped = MapJioSaavnSongToSong(song);
+                if (string.IsNullOrEmpty(mapped.Album)) mapped.Album = album.Title;
+                if (string.IsNullOrEmpty(mapped.AlbumId) || mapped.AlbumId.StartsWith("ext-squidwtf-song-"))
+                    mapped.AlbumId = album.Id;
+                mapped.AlbumArtist = artistName;
+                if (mapped.Track == null) mapped.Track = trackNum;
+                if (mapped.TotalTracks == null) mapped.TotalTracks = album.SongCount;
+                if (string.IsNullOrEmpty(mapped.CoverArtUrl)) mapped.CoverArtUrl = coverUrl;
+                if (string.IsNullOrEmpty(mapped.CoverArtUrlLarge)) mapped.CoverArtUrlLarge = coverUrl;
+
+                if (ShouldIncludeSong(mapped))
+                    album.Songs.Add(mapped);
+
+                trackNum++;
+            }
+        }
+
+        return album;
+    }
+
+    private static Artist MapJioSaavnSearchArtistToArtist(JioSaavnSearchArtist artist)
+    {
+        var id = artist.Id ?? "";
+        var imageUrl = artist.Image != null && artist.Image.Count > 0
+            ? artist.Image.OrderByDescending(i => i.Quality?.Length).FirstOrDefault()?.Url
+            : null;
+
+        return new Artist
+        {
+            Id = $"ext-squidwtf-artist-{id}",
+            Name = artist.Name ?? "",
+            ImageUrl = imageUrl,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = id
         };
     }
 

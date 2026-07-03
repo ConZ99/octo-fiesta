@@ -46,7 +46,9 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             WriteStatus("Amazon Country", _settings.Country, ConsoleColor.Cyan);
         }
 
-        if (_settings.InstanceTimeoutSeconds > 0 && !source.Equals("AmazonMusic", StringComparison.OrdinalIgnoreCase))
+        if (_settings.InstanceTimeoutSeconds > 0
+            && !source.Equals("AmazonMusic", StringComparison.OrdinalIgnoreCase)
+            && !source.Equals("JioSaavn", StringComparison.OrdinalIgnoreCase))
         {
             WriteStatus("Instance Timeout", $"{_settings.InstanceTimeoutSeconds}s", ConsoleColor.Cyan);
         }
@@ -69,6 +71,10 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             else if (source.Equals("AmazonMusic", StringComparison.OrdinalIgnoreCase))
             {
                 return await ValidateAmazonAsync(cancellationToken);
+            }
+            else if (source.Equals("JioSaavn", StringComparison.OrdinalIgnoreCase))
+            {
+                return await ValidateJioSaavnAsync(cancellationToken);
             }
             else
             {
@@ -137,6 +143,33 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             WriteStatus("SquidWTF API", "UNREACHABLE", ConsoleColor.Red);
             WriteDetail(ex.Message);
             return ValidationResult.Failure("-1", $"Cannot connect to Amazon Music SquidWTF: {ex.Message}");
+        }
+    }
+
+    private async Task<ValidationResult> ValidateJioSaavnAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync("https://saavn.squid.wtf/api/search/songs?query=test&limit=1", cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                WriteStatus("SquidWTF API", "REACHABLE", ConsoleColor.Green);
+                WriteDetail("No account credentials required - powered by JioSaavn");
+                return ValidationResult.Success("SquidWTF JioSaavn validation completed");
+            }
+            else
+            {
+                WriteStatus("SquidWTF API", $"HTTP {(int)response.StatusCode}", ConsoleColor.Yellow);
+                WriteDetail("Service may be temporarily unavailable");
+                return ValidationResult.Failure($"{response.StatusCode}", "SquidWTF JioSaavn returned error code");
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteStatus("SquidWTF API", "UNREACHABLE", ConsoleColor.Red);
+            WriteDetail(ex.Message);
+            return ValidationResult.Failure("-1", $"Cannot connect to JioSaavn SquidWTF: {ex.Message}");
         }
     }
 
@@ -257,6 +290,19 @@ public class SquidWTFStartupValidator : BaseStartupValidator
                 "OPUS" => ("Opus", false),
                 "ATMOS" => ("Dolby Atmos", false),
                 _ => ("Ultra HD FLAC 24-bit (default)", true)
+            };
+        }
+
+        if (source.Equals("JioSaavn", StringComparison.OrdinalIgnoreCase))
+        {
+            return quality switch
+            {
+                "320KBPS" or "320" or "HIGH" or "BEST" => ("320 kbps AAC", false),
+                "160KBPS" or "160" or "MEDIUM" => ("160 kbps AAC", false),
+                "96KBPS" or "96" => ("96 kbps AAC", false),
+                "48KBPS" or "48" => ("48 kbps AAC", false),
+                "12KBPS" or "12" or "LOW" => ("12 kbps AAC", false),
+                _ => ("320 kbps AAC (default)", true)
             };
         }
 
