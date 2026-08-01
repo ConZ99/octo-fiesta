@@ -4,11 +4,13 @@ namespace octo_fiesta.Models.Settings;
 /// Configuration for the SquidWTF music provider
 /// SquidWTF is a music downloader service that supports Qobuz, Tidal, Amazon Music,
 /// and JioSaavn backends
+/// SquidWTF is a music downloader service that supports Qobuz, Tidal, Amazon Music, and Deemix backends
 /// </summary>
 public class SquidWTFSettings
 {
     /// <summary>
     /// The backend source to use: "Qobuz", "Tidal", "AmazonMusic", or "JioSaavn"
+    /// The backend source to use: "Qobuz", "Tidal", "AmazonMusic", or "Deemix"
     /// Defaults to "Qobuz" if not specified
     /// </summary>
     public string Source { get; set; } = "Qobuz";
@@ -19,6 +21,7 @@ public class SquidWTFSettings
     /// For Tidal: HI_RES_LOSSLESS (FLAC 24-bit), LOSSLESS (FLAC 16-bit), HIGH (320kbps AAC), LOW (96kbps AAC)
     /// For AmazonMusic: FLAC_24 / ultrahd (24-bit), FLAC_16 / hd (16-bit), AAC / high (256kbps), OPUS, ATMOS
     /// For JioSaavn: 320kbps (default), 160kbps, 96kbps, 48kbps, 12kbps
+    /// For Deemix: FLAC, MP3_320 / 320, or MP3_128 / 128. The public Deemix instance ultimately controls stream quality.
     /// If not specified, highest quality will be used
     /// </summary>
     public string? Quality { get; set; }

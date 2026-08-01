@@ -75,6 +75,9 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             else if (source.Equals("JioSaavn", StringComparison.OrdinalIgnoreCase))
             {
                 return await ValidateJioSaavnAsync(cancellationToken);
+            else if (source.Equals("Deemix", StringComparison.OrdinalIgnoreCase))
+            {
+                return await ValidateDeemixAsync(cancellationToken);
             }
             else
             {
@@ -171,6 +174,19 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             WriteDetail(ex.Message);
             return ValidationResult.Failure("-1", $"Cannot connect to JioSaavn SquidWTF: {ex.Message}");
         }
+    private async Task<ValidationResult> ValidateDeemixAsync(CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.GetAsync("https://deemix.squid.wtf/api/health", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            return ValidationResult.Failure($"{response.StatusCode}", "Deemix SquidWTF returned error code");
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
+        var authenticated = document.RootElement.TryGetProperty("authenticated", out var value) && value.ValueKind == JsonValueKind.True;
+        WriteStatus("SquidWTF API", authenticated ? "REACHABLE" : "UNAUTHENTICATED", authenticated ? ConsoleColor.Green : ConsoleColor.Yellow);
+        WriteDetail(authenticated ? "Shared Deezer session pool is available - powered by Deemix" : "Deemix is reachable but has no authenticated Deezer session");
+        return authenticated
+            ? ValidationResult.Success("SquidWTF Deemix validation completed")
+            : ValidationResult.Failure("AUTH_REQUIRED", "Deemix has no authenticated session");
     }
 
     private async Task<ValidationResult> ValidateTidalAsync(CancellationToken cancellationToken)
@@ -303,6 +319,14 @@ public class SquidWTFStartupValidator : BaseStartupValidator
                 "48KBPS" or "48" => ("48 kbps AAC", false),
                 "12KBPS" or "12" or "LOW" => ("12 kbps AAC", false),
                 _ => ("320 kbps AAC (default)", true)
+        if (source.Equals("Deemix", StringComparison.OrdinalIgnoreCase))
+        {
+            return quality switch
+            {
+                "FLAC" => ("FLAC (server default)", false),
+                "MP3" or "MP3_320" or "320" => ("MP3 320 kbps (server-dependent)", false),
+                "MP3_128" or "128" => ("MP3 128 kbps (server-dependent)", false),
+                _ => ("FLAC (server default)", true)
             };
         }
 
