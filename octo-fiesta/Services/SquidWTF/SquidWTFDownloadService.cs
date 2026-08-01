@@ -12,6 +12,7 @@ namespace octo_fiesta.Services.SquidWTF;
 
 /// <summary>
 /// Download service implementation using SquidWTF API
+/// Supports Qobuz, Tidal, Amazon Music, and JioSaavn backends
 /// Supports Qobuz, Tidal, Amazon Music, and Deemix backends
 /// No decryption needed - SquidWTF returns direct streaming URLs
 /// </summary>
@@ -25,6 +26,7 @@ public class SquidWTFDownloadService : BaseDownloadService
     // Static Qobuz API endpoint
     private const string QobuzBaseUrl = "https://qobuz.squid.wtf";
     private const string AmazonBaseUrl = "https://amz.squid.wtf";
+    private const string JioSaavnBaseUrl = "https://saavn.squid.wtf";
     private const string DeemixBaseUrl = "https://deemix.squid.wtf";
 
     // Required headers
@@ -38,9 +40,11 @@ public class SquidWTFDownloadService : BaseDownloadService
     // Qobuz: 27 = FLAC 24-bit/192kHz, 7 = FLAC 24-bit/96kHz, 6 = FLAC 16-bit/44kHz, 5 = MP3 320kbps
     // Tidal: HI_RES_LOSSLESS (FLAC 24-bit), LOSSLESS (FLAC 16-bit), HIGH (320kbps AAC), LOW (96kbps AAC)
     // Amazon: best (FLAC 24-bit), hd (FLAC 16-bit), standard (AAC 256kbps), opus (Opus), atmos (Dolby Atmos)
+    // JioSaavn: 320kbps (default/highest), 160kbps, 96kbps, 48kbps, 12kbps
 
     private bool IsQobuzSource => _squidWTFSettings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
     private bool IsAmazonSource => _squidWTFSettings.Source.Equals("AmazonMusic", StringComparison.OrdinalIgnoreCase);
+    private bool IsJioSaavnSource => _squidWTFSettings.Source.Equals("JioSaavn", StringComparison.OrdinalIgnoreCase);
     private bool IsDeemixSource => _squidWTFSettings.Source.Equals("Deemix", StringComparison.OrdinalIgnoreCase);
 
     protected override string ProviderName => "squidwtf";
@@ -85,6 +89,12 @@ public class SquidWTFDownloadService : BaseDownloadService
                 return response.IsSuccessStatusCode;
             }
 
+            if (IsJioSaavnSource)
+            {
+                var response = await _httpClient.GetAsync($"{JioSaavnBaseUrl}/api/search/songs?query=test&limit=1");
+                return response.IsSuccessStatusCode;
+            }
+            
             if (IsDeemixSource)
             {
                 var response = await _httpClient.GetAsync($"{DeemixBaseUrl}/api/health");
@@ -126,6 +136,7 @@ public class SquidWTFDownloadService : BaseDownloadService
 
         if (IsQobuzSource) return "27";
         if (IsAmazonSource) return "ultrahd";
+        if (IsJioSaavnSource) return "320kbps";
         if (IsDeemixSource) return "FLAC";
         return "HI_RES_LOSSLESS";
     }
@@ -136,6 +147,8 @@ public class SquidWTFDownloadService : BaseDownloadService
             return await DownloadTrackQobuzAsync(trackId, song, cancellationToken);
         if (IsAmazonSource)
             return await DownloadTrackAmazonAsync(trackId, song, cancellationToken);
+        if (IsJioSaavnSource)
+            return await DownloadTrackJioSaavnAsync(trackId, song, cancellationToken);
         if (IsDeemixSource)
             return await DownloadTrackDeemixAsync(trackId, song, cancellationToken);
         return await DownloadTrackTidalAsync(trackId, song, cancellationToken);
@@ -396,6 +409,79 @@ public class SquidWTFDownloadService : BaseDownloadService
             "opus"  => (".m4a", "OPUS_320"),
             "atmos" => (".m4a", "ATMOS"),
             _       => (".m4a", "AAC_256"),
+        };
+    }
+
+    #endregion
+
+    #region JioSaavn Download
+
+    private async Task<DownloadResult> DownloadTrackJioSaavnAsync(string trackId, Song song, CancellationToken cancellationToken)
+    {
+        var targetQuality = GetJioSaavnQuality();
+
+        // Fetch song from JioSaavn API to get the download URL for the requested quality
+        var url = $"{JioSaavnBaseUrl}/api/songs/{Uri.EscapeDataString(trackId)}";
+        var response = await _httpClient.GetAsync(url, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        Logger.LogDebug("JioSaavn /api/songs/{TrackId} response: {Json}", trackId, json);
+
+        var result = System.Text.Json.JsonSerializer.Deserialize<Models.SquidWTF.JioSaavnResponse<List<Models.SquidWTF.JioSaavnSong>>>(json);
+        var saavnSong = result?.Data?.FirstOrDefault();
+
+        if (saavnSong?.DownloadUrl == null || saavnSong.DownloadUrl.Count == 0)
+        {
+            throw new Exception($"JioSaavn returned no download URLs for track {trackId}");
+        }
+
+        // Find the requested quality or fall back to highest available
+        var downloadEntry = saavnSong.DownloadUrl
+            .FirstOrDefault(u => string.Equals(u.Quality, targetQuality, StringComparison.OrdinalIgnoreCase))
+            ?? saavnSong.DownloadUrl.LastOrDefault(); // last = highest quality in the list
+
+        if (string.IsNullOrEmpty(downloadEntry?.Url))
+        {
+            throw new Exception($"JioSaavn has no usable download URL for track {trackId}");
+        }
+
+        var actualQuality = downloadEntry.Quality ?? targetQuality;
+        Logger.LogInformation("Downloading JioSaavn track {TrackId}: {Title} (quality: {Quality})", trackId, song.Title, actualQuality);
+
+        var downloadStream = await GetDownloadStreamAsync(downloadEntry.Url, cancellationToken);
+        var (extension, qualityTag) = GetJioSaavnExtensionAndQuality(actualQuality);
+
+        return new DownloadResult(downloadStream, extension, qualityTag);
+    }
+
+    private string GetJioSaavnQuality()
+    {
+        var quality = _squidWTFSettings.Quality;
+        if (string.IsNullOrEmpty(quality)) return "320kbps"; // highest quality by default
+
+        return quality.ToUpperInvariant() switch
+        {
+            "320KBPS" or "320" or "HIGH" or "BEST" => "320kbps",
+            "160KBPS" or "160" or "MEDIUM" => "160kbps",
+            "96KBPS" or "96" => "96kbps",
+            "48KBPS" or "48" => "48kbps",
+            "12KBPS" or "12" or "LOW" => "12kbps",
+            _ => "320kbps"
+        };
+    }
+
+    private static (string Extension, string Quality) GetJioSaavnExtensionAndQuality(string quality)
+    {
+        // JioSaavn delivers MP4/AAC audio at all quality levels
+        return quality switch
+        {
+            "320kbps" => (".m4a", "AAC_320"),
+            "160kbps" => (".m4a", "AAC_160"),
+            "96kbps"  => (".m4a", "AAC_96"),
+            "48kbps"  => (".m4a", "AAC_48"),
+            "12kbps"  => (".m4a", "AAC_12"),
+            _ => (".m4a", "AAC_320")
         };
     }
 
